@@ -1,0 +1,4 @@
+.cache/
+*.qmlc
+*~
+.DS_Store
