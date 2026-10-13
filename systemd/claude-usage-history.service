@@ -1,0 +1,6 @@
+[Unit]
+Description=Fold Claude usage into a long-term history
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I %h/.config/omarchy/plugins/austraz.agents/claude_history.py

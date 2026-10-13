@@ -25,7 +25,16 @@ Item {
   function parse(content) {
     try {
       var parsed = JSON.parse(String(content || ""))
-      root.record = parsed && typeof parsed === "object" ? parsed : null
+      if (parsed && typeof parsed === "object") {
+        // The stock collector rewrites claude.json without historyDays and
+        // claude_history.py adds them back a moment later; keep the last
+        // series in between so the history chart does not blink.
+        if (!parsed.historyDays && root.record && root.record.historyDays)
+          parsed.historyDays = root.record.historyDays
+        root.record = parsed
+      } else {
+        root.record = null
+      }
     } catch (e) {
       console.warn("agents", "Ignoring bad usage record", root.path, e)
       root.record = null

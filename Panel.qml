@@ -821,6 +821,19 @@ Panel {
     return map
   }
 
+  // Claude's ledger (claude_history.py) as one bar per day, oldest first,
+  // padded back to `span` days so the axis stays put while history fills in.
+  function longHistoryBars(p, span) {
+    var map = root.historyTokenMap(p)
+    var today = root.todayDate()
+    var bars = []
+    for (var i = span - 1; i >= 0; i--) {
+      var iso = root.addDaysIso(today, -i)
+      bars.push({ date: iso, tokens: root.historyDayTokens(map, iso) })
+    }
+    return bars
+  }
+
   function historyDayTokens(map, iso) {
     if (!map || !iso) return 0
     var n = Number(map[iso])
@@ -1173,37 +1186,55 @@ Panel {
           }
 
           // ---------- Provider switch ----------
-          Row {
-            id: providerSwitch
+          // Inset + floored cell widths so the 1px Button stroke stays inside
+          // the Flickable clip (same idea as recordsHost). Without this the
+          // left hairline of the first chip is clipped and leftover slack
+          // piles up only on the right.
+          Item {
+            id: providerSwitchHost
             visible: root.providers.length > 1
             width: parent.width
-            spacing: Style.spacing.md
+            height: providerSwitch.height
+            readonly property real inset: Style.space(4)
+            readonly property real inner: Math.max(1, width - inset * 2)
 
-            readonly property real cellWidth: root.providers.length > 0
-              ? (width - spacing * (root.providers.length - 1)) / root.providers.length
-              : 0
+            Row {
+              id: providerSwitch
+              x: providerSwitchHost.inset
+                + Math.max(0, Math.floor((providerSwitchHost.inner - providerSwitch.used) / 2))
+              width: used
+              spacing: Style.spacing.md
 
-            Repeater {
-              model: root.providers
+              readonly property real cellWidth: root.providers.length > 0
+                ? Math.floor((providerSwitchHost.inner - spacing * (root.providers.length - 1))
+                             / root.providers.length)
+                : 0
+              readonly property real used: root.providers.length > 0
+                ? cellWidth * root.providers.length + spacing * (root.providers.length - 1)
+                : 0
 
-              Button {
-                required property var modelData
-                required property int index
+              Repeater {
+                model: root.providers
 
-                width: providerSwitch.cellWidth
-                text: modelData.providerName
-                selected: index === root.providerIndex
-                hasCursor: root.cursorActive && index === root.providerIndex
-                bordered: true
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.bodySmall
-                verticalPadding: Style.spacing.controlPaddingY
-                onClicked: {
-                  root.cursorActive = true
-                  root.selectProvider(index)
+                Button {
+                  required property var modelData
+                  required property int index
+
+                  width: providerSwitch.cellWidth
+                  text: modelData.providerName
+                  selected: index === root.providerIndex
+                  hasCursor: root.cursorActive && index === root.providerIndex
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.spacing.controlPaddingY
+                  onClicked: {
+                    root.cursorActive = true
+                    root.selectProvider(index)
+                  }
+                  onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
                 }
-                onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
               }
             }
           }
@@ -1564,6 +1595,122 @@ Panel {
             }
           }
 
+          // ---------- Claude history ----------
+          // Daily tokens only: Claude caps on 5-hour and weekly windows in
+          // percent, so there is no monthly allowance to project against.
+          PanelSeparator {
+            visible: historySection.visible
+            foreground: root.foreground
+          }
+
+          Column {
+            id: historySection
+            visible: !!root.provider && root.provider.providerId === "claude"
+              && root.provider.historyDays && root.provider.historyDays.length > 0
+            width: parent.width
+            spacing: Style.spacing.md
+
+            readonly property int span: 90
+            readonly property var bars: root.longHistoryBars(root.provider, historySection.span)
+            readonly property real peak: {
+              var max = 1
+              for (var i = 0; i < bars.length; i++) max = Math.max(max, bars[i].tokens)
+              return max
+            }
+            readonly property real total: {
+              var sum = 0
+              for (var i = 0; i < bars.length; i++) sum += bars[i].tokens
+              return sum
+            }
+            readonly property real gap: 1
+            readonly property real barWidth: Math.max(1, (width - gap * (span - 1)) / span)
+
+            Item {
+              width: parent.width
+              implicitHeight: Math.max(historyHeader.implicitHeight, historyTotal.implicitHeight)
+
+              PanelSectionHeader {
+                id: historyHeader
+                text: "LAST " + historySection.span + " DAYS"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                anchors.left: parent.left
+                anchors.right: historyTotal.left
+                anchors.rightMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                id: historyTotal
+                textFormat: Text.PlainText
+                text: "total " + usage.formatTokenCount(historySection.total)
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+
+            Item {
+              id: historyPlot
+              width: parent.width
+              height: Style.space(56)
+
+              Repeater {
+                model: historySection.bars
+
+                Rectangle {
+                  required property var modelData
+                  required property int index
+
+                  readonly property bool isToday: modelData.date === root.todayDate()
+
+                  x: index * (historySection.barWidth + historySection.gap)
+                  y: historyPlot.height - height
+                  width: historySection.barWidth
+                  height: modelData.tokens > 0
+                    ? Math.max(2, historyPlot.height * modelData.tokens / historySection.peak)
+                    : 1
+                  color: modelData.tokens > 0
+                    ? (isToday ? root.foreground : root.alpha(root.foreground, 0.55))
+                    : root.track
+                }
+              }
+            }
+
+            // Short month name under the first day of each month.
+            Item {
+              width: parent.width
+              height: historyMonthProbe.implicitHeight
+
+              Text {
+                id: historyMonthProbe
+                visible: false
+                text: "M"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Repeater {
+                model: historySection.bars
+
+                Text {
+                  required property var modelData
+                  required property int index
+
+                  visible: String(modelData.date).slice(8) === "01"
+                  x: Math.min(index * (historySection.barWidth + historySection.gap), parent.width - implicitWidth)
+                  textFormat: Text.PlainText
+                  text: Qt.locale().monthName(Number(String(modelData.date).slice(5, 7)) - 1, Locale.ShortFormat)
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+            }
+          }
+
           // ---------- Usage ----------
           PanelSeparator {
             visible: usageSection.visible
@@ -1690,7 +1837,7 @@ Panel {
             }
           }
 
-          // ---------- Records ----------
+          // ---------- Achievements ----------
           PanelSeparator {
             visible: recordsSection.visible
             foreground: root.foreground
@@ -1704,7 +1851,7 @@ Panel {
 
             PanelSectionHeader {
               width: parent.width
-              text: "RECORDS"
+              text: "ACHIEVMENTS"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }

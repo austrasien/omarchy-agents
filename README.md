@@ -18,6 +18,10 @@ cross-device aggregation); `Agent.qml` is the per-record file watcher.
 - **Balance** — prepaid agents report a credit ledger instead of limits:
   remaining credit, a fuel-gauge meter that drains toward empty, and
   funded-versus-spent detail.
+- **Last 90 days** (Claude) — one bar per day of tokens, month names
+  underneath, total on the right. No cap or projection: Claude limits
+  are 5-hour and weekly percentages, not a monthly allowance. Needs the
+  history watcher below.
 - **Tokens by day** — one row per day for the last week: day, bar, tokens, with today
   bolded at the bottom. Hover today for its prompt and session count.
 - **Tokens by model** — tokens per model with the bar behind each row scaled
@@ -91,6 +95,24 @@ period. `accountId` only matters when one API key can access several
 accounts. Without a configured `fundedAmount` the tab still shows token
 usage, just no balance. With a live ledger, `fundedAmount` is optional and
 only adds the meter and the spent-of-funded line under the real figure.
+
+### Claude history
+
+The stock Claude collector rebuilds the last seven days from transcripts on
+every run and forgets everything older. `claude_history.py` merges each run into
+`~/.local/state/omarchy/agents/history/claude.json`, keeping the highest count
+seen per day so pruned transcripts never shrink a recorded day, and writes the
+full series back into the record as `historyDays`. A systemd path unit runs it
+whenever `claude.json` changes, whoever wrote it:
+
+```sh
+cd ~/.config/omarchy/plugins/austraz.agents
+systemctl --user link "$PWD/systemd/claude-usage-history.service"
+systemctl --user enable --now "$PWD/systemd/claude-usage-history.path"
+```
+
+History starts the day the watcher is enabled; earlier days only appear while
+they are still in the seven-day window.
 
 ## Interactions
 

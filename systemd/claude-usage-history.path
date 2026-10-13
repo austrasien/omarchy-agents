@@ -1,0 +1,8 @@
+[Unit]
+Description=Fold Claude usage into a long-term history when claude.json changes
+
+[Path]
+PathChanged=%h/.local/state/omarchy/agents/usage/claude.json
+
+[Install]
+WantedBy=default.target

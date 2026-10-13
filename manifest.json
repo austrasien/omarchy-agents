@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "austraz.agents",
   "name": "My Agents",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "author": "Omarchy",
   "license": "MIT",
   "description": "Claude Code, Codex, and Fireworks usage, limits, and pace in a native Omarchy bar panel.",

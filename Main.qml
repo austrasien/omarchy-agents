@@ -143,9 +143,9 @@ Item {
     }
   }
 
-  // omarchy-agent-usage-update only knows claude/codex/fireworks. Cursor
-  // lives in a separate plugin; refresh/open would otherwise leave it stale
-  // until the five-minute timer (or a claude.json rewrite) kicked it.
+  // omarchy-agent-usage-update only knows claude/codex/fireworks. Cursor,
+  // Gemini, and Grok live in separate plugins; refresh/open would otherwise
+  // leave them stale until their timers (or a claude.json rewrite) kicked in.
   Process {
     id: cursorUpdate
     running: false
@@ -168,6 +168,30 @@ Item {
     if (cursorUpdate.running) return
     cursorUpdate.command = cursorUpdateCommand(kind)
     cursorUpdate.running = true
+  }
+
+  Process {
+    id: geminiGrokUpdate
+    running: false
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text.trim() !== "") console.warn("gemini-grok-usage", text.trim())
+    }
+  }
+
+  readonly property string geminiGrokCollector: home + "/.config/omarchy/plugins/io.github.austrasien.gemini-grok-usage/collect.py"
+
+  function geminiGrokUpdateCommand(kind) {
+    var command = ["python3", root.geminiGrokCollector, "--write", "--agent", "all"]
+    if (kind === "force") command.push("--force")
+    if (kind === "limits") command.push("--limits-only")
+    return command
+  }
+
+  function runGeminiGrokUpdate(kind) {
+    if (geminiGrokUpdate.running) return
+    geminiGrokUpdate.command = geminiGrokUpdateCommand(kind)
+    geminiGrokUpdate.running = true
   }
 
   function updateCommand(kind, agentIds) {
@@ -194,6 +218,7 @@ Item {
     updateProcess.command = updateCommand(kind, agentIds)
     updateProcess.running = true
     runCursorUpdate(kind)
+    runGeminiGrokUpdate(kind)
   }
 
   function refresh() { refreshAll(true) }
