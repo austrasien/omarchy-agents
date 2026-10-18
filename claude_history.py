@@ -6,17 +6,26 @@ every run and forgets anything older than a week. This folds each run into a
 ledger outside the usage directory (every file there becomes a provider) and
 writes the full series back into claude.json as historyDays, the same shape
 the Cursor collector produces.
+
+When the widget's synced aggregation is on, the day totals also include the
+snapshots other machines (or bin/pull-remote-usage) dropped in syncDir, so
+the 90-day chart covers every machine the panel's today/week numbers do.
 """
 
 import json
 import os
+import re
+import socket
 import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
-STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "omarchy" / "agents"
+HOME = Path.home()
+STATE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local" / "state")) / "omarchy" / "agents"
 USAGE_FILE = STATE / "usage" / "claude.json"
 LEDGER_FILE = STATE / "history" / "claude.json"
+SHELL_JSON = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy" / "shell.json"
+WIDGET_ID = "austraz.agents"
 
 
 def read_json(path: Path):
@@ -33,6 +42,72 @@ def write_json(path: Path, data) -> None:
     json.dump(data, handle, separators=(",", ":"))
     handle.write("\n")
   os.replace(tmp, path)
+
+
+def widget_settings() -> dict:
+  data = read_json(SHELL_JSON)
+  layout = data.get("bar", {}).get("layout", {}) if isinstance(data, dict) else {}
+  for section in layout.values() if isinstance(layout, dict) else []:
+    for entry in section if isinstance(section, list) else []:
+      if isinstance(entry, dict) and entry.get("id") == WIDGET_ID:
+        return entry
+  return {}
+
+
+def expand(path: str) -> Path:
+  value = str(path or "").strip()
+  if value in ("", "~"):
+    return HOME
+  if value.startswith("~/"):
+    return HOME / value[2:]
+  if value.startswith("$HOME/"):
+    return HOME / value[6:]
+  return Path(value) if value.startswith("/") else HOME / value
+
+
+def safe_device_id(raw) -> str:
+  value = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(raw or "").strip()).strip("._-")
+  return value or "device"
+
+
+def remote_day_tokens() -> dict:
+  """Per-date Claude token sums over every synced snapshot but our own.
+
+  Mirrors Main.qml: syncMode on + syncDir set, own file is syncFileName or
+  <deviceId>.json, own device id is syncDeviceId or the file stem/hostname.
+  """
+  settings = widget_settings()
+  mode = str(settings.get("syncMode", settings.get("syncEnabled", ""))).strip().lower()
+  sync_dir = str(settings.get("syncDir") or "").strip()
+  if mode not in ("on", "enabled", "true", "yes", "1") or not sync_dir:
+    return {}
+  own_device = str(settings.get("syncDeviceId") or "").strip()
+  own_file = str(settings.get("syncFileName") or "").strip()
+  if not own_file:
+    own_file = safe_device_id(own_device or socket.gethostname()) + ".json"
+  elif not own_file.lower().endswith(".json"):
+    own_file += ".json"
+  own_device = safe_device_id(own_device or own_file[:-5])
+
+  totals: dict = {}
+  for path in sorted(expand(sync_dir).glob("*.json")):
+    if path.name == own_file:
+      continue
+    snapshot = read_json(path)
+    if not isinstance(snapshot, dict):
+      continue
+    if safe_device_id(snapshot.get("deviceId")) == own_device:
+      continue
+    claude = (snapshot.get("providers") or {}).get("claude") or {}
+    if str(claude.get("scope") or "device") == "account":
+      continue
+    for row in claude.get("recentDays") or []:
+      if not isinstance(row, dict) or not valid_day(row.get("date")):
+        continue
+      tokens = row.get("messageCount")
+      if isinstance(tokens, (int, float)) and tokens >= 0:
+        totals[str(row["date"])] = totals.get(str(row["date"]), 0) + int(tokens)
+  return totals
 
 
 def valid_day(value) -> bool:
@@ -55,14 +130,20 @@ def main() -> None:
 
   # recentDays.messageCount is a token total. Keep the highest count seen for
   # a day so transcripts pruned later cannot shrink a day already recorded.
+  local = {}
   for row in record.get("recentDays") or []:
     if not isinstance(row, dict) or not valid_day(row.get("date")):
       continue
     tokens = row.get("messageCount")
     if not isinstance(tokens, (int, float)) or tokens < 0:
       continue
-    key = str(row["date"])
-    days[key] = max(int(tokens), int(days.get(key) or 0))
+    local[str(row["date"])] = int(tokens)
+
+  # Other machines' snapshots add to each day, the same way the panel sums
+  # device-scoped stats across devices for today and the last week.
+  remote = remote_day_tokens()
+  for key in set(local) | set(remote):
+    days[key] = max(local.get(key, 0) + remote.get(key, 0), int(days.get(key) or 0))
 
   if not days:
     return

@@ -130,6 +130,8 @@ Item {
     running: false
     onExited: {
       root.rescanAgents()
+      // Snapshots from other machines may have landed since the last refresh.
+      if (root.syncConfigured()) root.scheduleSync()
       if (root.pendingUpdateKind !== "") {
         var kind = root.pendingUpdateKind
         root.pendingUpdateKind = ""

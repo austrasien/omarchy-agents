@@ -1,0 +1,8 @@
+[Unit]
+Description=Pull agent usage from remote machines into the agents sync folder
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I %h/.config/omarchy/plugins/austraz.agents/bin/pull-remote-usage
+ExecStartPost=/usr/bin/python3 -I %h/.config/omarchy/plugins/austraz.agents/claude_history.py

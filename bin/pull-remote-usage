@@ -1,0 +1,173 @@
+#!/usr/bin/python3 -I
+"""Pull agent usage records from remote machines into sync snapshots.
+
+The agents panel merges every ``*.json`` snapshot found in its ``syncDir``
+(see ``syncMode`` in the widget settings). A machine without an Omarchy shell
+never writes one, so this script does it from here: for each host given on
+the command line (or listed in the widget's ``remoteHosts`` setting) it runs
+``omarchy-agent-usage-update`` over SSH, reads the records it produced, and
+writes ``<syncDir>/<host>.json`` in the exact shape ``Main.qml``
+``localSnapshot()`` would produce on that machine.
+
+Hosts are SSH destinations (an alias from ``~/.ssh/config`` works best). The
+connection must succeed non-interactively: an agent, a key without passphrase,
+or a persistent ControlMaster socket. An unreachable host keeps its previous
+snapshot and is reported on stderr.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+HOME = Path.home()
+STATE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local" / "state")) / "omarchy" / "agents"
+SHELL_JSON = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "omarchy" / "shell.json"
+WIDGET_ID = "austraz.agents"
+SSH_TIMEOUT = 15
+REMOTE_SCRIPT = (
+  "omarchy-agent-usage-update >/dev/null 2>&1; "
+  "cd \"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/agents/usage\" 2>/dev/null || exit 0; "
+  "for f in *.json; do [ -f \"$f\" ] || continue; "
+  "printf '===%s===\\n' \"${f%.json}\"; cat \"$f\"; printf '\\n=== EOM ===\\n'; done"
+)
+
+
+def widget_settings() -> dict:
+  try:
+    layout = json.loads(SHELL_JSON.read_text(encoding="utf-8")).get("bar", {}).get("layout", {})
+  except (OSError, ValueError, AttributeError):
+    return {}
+  for section in layout.values():
+    for entry in section if isinstance(section, list) else []:
+      if isinstance(entry, dict) and entry.get("id") == WIDGET_ID:
+        return entry
+  return {}
+
+
+def expand(path: str) -> Path:
+  value = str(path or "").strip()
+  if value in ("", "~"):
+    return HOME
+  if value.startswith("~/"):
+    return HOME / value[2:]
+  if value.startswith("$HOME/"):
+    return HOME / value[6:]
+  return Path(value) if value.startswith("/") else HOME / value
+
+
+def sync_dir() -> Path:
+  configured = str(widget_settings().get("syncDir") or "").strip()
+  return expand(configured) if configured else STATE / "sync"
+
+
+def number(value) -> int:
+  try:
+    n = float(value or 0)
+  except (TypeError, ValueError):
+    return 0
+  return int(round(n)) if n == n and abs(n) != float("inf") else 0
+
+
+def provider_snapshot(record: dict) -> dict:
+  return {
+    "providerId": str(record.get("id")),
+    "providerName": str(record.get("name") or record.get("id")),
+    "ready": record.get("ready") is True,
+    "hasLocalStats": record.get("hasLocalStats") is not False,
+    "hasPromptStats": record.get("hasPromptStats") is not False,
+    "scope": str(record.get("scope") or "device"),
+    "todayPrompts": number(record.get("todayPrompts")),
+    "todaySessions": number(record.get("todaySessions")),
+    "todayTotalTokens": number(record.get("todayTotalTokens")),
+    "todayTokensByModel": record.get("todayTokensByModel") or {},
+    "recentDays": record.get("recentDays") or [],
+    "totalPrompts": number(record.get("totalPrompts")),
+    "totalSessions": number(record.get("totalSessions")),
+    "activeDays": number(record.get("activeDays")),
+    "activeDates": record.get("activeDates") or [],
+    "modelUsage": record.get("modelUsage") or {},
+  }
+
+
+def parse_records(output: str) -> dict:
+  records = {}
+  current = None
+  body = []
+  for line in output.split("\n"):
+    if line == "=== EOM ===":
+      if current is not None:
+        try:
+          parsed = json.loads("\n".join(body))
+          if isinstance(parsed, dict) and parsed.get("id"):
+            records[str(parsed["id"])] = parsed
+        except ValueError:
+          print(f"pull-remote-usage: ignoring bad record {current}", file=sys.stderr)
+      current, body = None, []
+    elif line.startswith("===") and line.endswith("===") and current is None:
+      current, body = line[3:-3], []
+    elif current is not None:
+      body.append(line)
+  return records
+
+
+def write_json(path: Path, data) -> None:
+  path.parent.mkdir(parents=True, exist_ok=True)
+  fd, tmp = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".")
+  with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump(data, handle, indent=2)
+    handle.write("\n")
+  os.replace(tmp, path)
+
+
+def pull(host: str, target: Path) -> bool:
+  cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", host, REMOTE_SCRIPT]
+  try:
+    run = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+  except subprocess.TimeoutExpired:
+    print(f"pull-remote-usage: {host}: ssh timed out", file=sys.stderr)
+    return False
+  if run.returncode != 0:
+    print(f"pull-remote-usage: {host}: ssh failed ({run.returncode}): {run.stderr.strip()}", file=sys.stderr)
+    return False
+  records = parse_records(run.stdout)
+  if not records:
+    print(f"pull-remote-usage: {host}: no usage records", file=sys.stderr)
+    return False
+  snapshot = {
+    "schemaVersion": 1,
+    "deviceId": host,
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "providers": {pid: provider_snapshot(rec) for pid, rec in records.items()},
+  }
+  write_json(target, snapshot)
+  claude = snapshot["providers"].get("claude", {})
+  print(f"{host}: {len(records)} records, claude today {claude.get('todayTotalTokens', 0):,} tokens -> {target}")
+  return True
+
+
+def configured_hosts() -> list[str]:
+  raw = widget_settings().get("remoteHosts") or ""
+  if isinstance(raw, list):
+    return [str(h).strip() for h in raw if str(h).strip()]
+  return [h for h in re.split(r"[\s,]+", str(raw)) if h]
+
+
+def main(argv: list[str]) -> int:
+  hosts = [h for h in argv if h and not h.startswith("-")] or configured_hosts()
+  if not hosts:
+    print("pull-remote-usage: no hosts given and remoteHosts is empty in the widget settings", file=sys.stderr)
+    return 0
+  directory = sync_dir()
+  ok = True
+  for host in hosts:
+    ok = pull(host, directory / f"{host}.json") and ok
+  return 0 if ok else 1
+
+
+if __name__ == "__main__":
+  sys.exit(main(sys.argv[1:]))

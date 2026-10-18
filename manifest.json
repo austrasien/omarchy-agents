@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "austraz.agents",
   "name": "My Agents",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "author": "Omarchy",
   "license": "MIT",
   "description": "Claude Code, Codex, and Fireworks usage, limits, and pace in a native Omarchy bar panel.",
@@ -38,7 +38,8 @@
       "syncMode": "Off",
       "syncDir": "",
       "syncFileName": "",
-      "syncDeviceId": ""
+      "syncDeviceId": "",
+      "remoteHosts": ""
     },
     "schema": [
       {
@@ -81,6 +82,13 @@
         "label": "Device id",
         "defaultValue": "",
         "description": "Optional stable device name used inside synced aggregate snapshots."
+      },
+      {
+        "key": "remoteHosts",
+        "type": "string",
+        "label": "Remote hosts",
+        "defaultValue": "",
+        "description": "Optional. SSH destinations (comma-separated) whose agent usage bin/pull-remote-usage fetches into the sync folder. Needs syncMode On and the agents-remote-usage timer."
       }
     ]
   },

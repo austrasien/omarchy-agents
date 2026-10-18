@@ -134,6 +134,7 @@ top-level keys can be set with
 | `syncDir` | `""` | A folder synced by Syncthing, Dropbox, rsync, … |
 | `syncFileName` | `<hostname>.json` | This machine's snapshot file |
 | `syncDeviceId` | hostname | Stable device name inside the snapshot |
+| `remoteHosts` | `""` | SSH destinations whose usage `bin/pull-remote-usage` fetches (see Remote machines) |
 
 Numbers need `--json`, or they land in `shell.json` as strings:
 
@@ -170,3 +171,31 @@ One caveat on "all-time": the Codex collector only reads native session files
 touched in the last 30 days, and Fireworks requests the last 30 days from its
 billing API, so their totals and day counts cover that window. Claude's cover
 every transcript still on disk.
+
+### Remote machines
+
+Agents running on a headless server never write a transcript on this
+machine, and a server without an Omarchy shell never writes a sync snapshot.
+`bin/pull-remote-usage` closes that gap from here: for every SSH destination
+in the `remoteHosts` setting it runs `omarchy-agent-usage-update` on the
+remote, reads the records it produced, and writes `<syncDir>/<host>.json` in
+the same shape the widget's own `localSnapshot()` produces. With `syncMode`
+on, the panel merges it like any other device, and `claude_history.py` folds
+the remote days into the 90-day chart. The shell also rescans `syncDir` after
+each of its own refreshes, so a fresh snapshot shows up within one interval.
+
+```sh
+omarchy bar set austraz.agents syncMode On
+omarchy bar set austraz.agents syncDir '~/.local/state/omarchy/agents/sync'
+omarchy bar set austraz.agents remoteHosts 'myserver'
+cd ~/.config/omarchy/plugins/austraz.agents
+systemctl --user link "$PWD/systemd/agents-remote-usage.service"
+systemctl --user enable --now "$PWD/systemd/agents-remote-usage.timer"
+journalctl --user -u agents-remote-usage.service -n 5
+```
+
+The remote needs Omarchy's `omarchy-agent-usage-update` on its PATH and the
+SSH connection must work non-interactively (agent, passphrase-less key, or a
+persistent ControlMaster socket). An unreachable host keeps its last snapshot
+until the next 10-minute run. Note the IPC target stays `omarchy.agents` even
+though the plugin id is `austraz.agents`.
