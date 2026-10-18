@@ -12,6 +12,7 @@ snapshots other machines (or bin/pull-remote-usage) dropped in syncDir, so
 the 90-day chart covers every machine the panel's today/week numbers do.
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -118,10 +119,20 @@ def valid_day(value) -> bool:
     return False
 
 
+def load_forecast():
+  # -I keeps the script's own folder off sys.path, so load the sibling by path.
+  path = Path(__file__).resolve().with_name("forecast.py")
+  spec = importlib.util.spec_from_file_location("agents_forecast", path)
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  return module
+
+
 def main() -> None:
   record = read_json(USAGE_FILE)
   if not isinstance(record, dict):
     return
+  before = json.dumps(record, sort_keys=True)
 
   ledger = read_json(LEDGER_FILE)
   days = ledger.get("days") if isinstance(ledger, dict) else None
@@ -145,21 +156,24 @@ def main() -> None:
   for key in set(local) | set(remote):
     days[key] = max(local.get(key, 0) + remote.get(key, 0), int(days.get(key) or 0))
 
-  if not days:
-    return
-  write_json(LEDGER_FILE, {"schemaVersion": 1, "days": dict(sorted(days.items()))})
+  if days:
+    write_json(LEDGER_FILE, {"schemaVersion": 1, "days": dict(sorted(days.items()))})
 
-  history = []
-  day = date.fromisoformat(min(days))
-  last = max(date.today(), date.fromisoformat(max(days)))
-  while day <= last:
-    key = day.isoformat()
-    history.append({"date": key, "tokens": int(days.get(key) or 0), "cents": 0})
-    day += timedelta(days=1)
+    history = []
+    day = date.fromisoformat(min(days))
+    last = max(date.today(), date.fromisoformat(max(days)))
+    while day <= last:
+      key = day.isoformat()
+      history.append({"date": key, "tokens": int(days.get(key) or 0), "cents": 0})
+      day += timedelta(days=1)
+    record["historyDays"] = history
 
-  if record.get("historyDays") == history:
+  load_forecast().update(record, STATE)
+
+  # Writing claude.json fires claude-usage-history.path again; an unchanged
+  # record must not be rewritten or the unit would loop.
+  if json.dumps(record, sort_keys=True) == before:
     return
-  record["historyDays"] = history
   write_json(USAGE_FILE, record)
 
 

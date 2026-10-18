@@ -14,7 +14,11 @@ cross-device aggregation); `Agent.qml` is the per-record file watcher.
 - **Subscription switch** — one chip per enabled agent (`h`/`l` or click).
   It appears only when more than one agent is enabled.
 - **Limits** — the percentage of each allowance used, a matching meter, and
-  the time until the session or weekly window resets.
+  each window's own reset (weekday and time for windows longer than a day).
+  Claude limits also show where the window lands at the usual pace: the
+  meter runs on to the projection, then fainter to the busy-day bound, in a
+  green → yellow → orange → red ink set by the projection; the line under it
+  reads "Usual pace → 47% (42–54%)", or the time the cap would be hit.
 - **Balance** — prepaid agents report a credit ledger instead of limits:
   remaining credit, a fuel-gauge meter that drains toward empty, and
   funded-versus-spent detail.
@@ -23,7 +27,8 @@ cross-device aggregation); `Agent.qml` is the per-record file watcher.
   are 5-hour and weekly percentages, not a monthly allowance. Needs the
   history watcher below.
 - **Tokens by day** — one row per day for the last week: day, bar, tokens, with today
-  bolded at the bottom. Hover today for its prompt and session count.
+  bolded at the bottom. A gold, silver or bronze cup marks a day on the last
+  30 days' podium. Hover today for its prompt and session count.
 - **Tokens by model** — tokens per model with the bar behind each row scaled
   to the heaviest model,
   the same way the weekly chart scales to its busiest day. Hover for the
@@ -113,6 +118,26 @@ systemctl --user enable --now "$PWD/systemd/claude-usage-history.path"
 
 History starts the day the watcher is enabled; earlier days only appear while
 they are still in the seven-day window.
+
+### Claude limit forecast
+
+The same run calls `forecast.py`, which adds a `forecast` object
+(`mid`, `low`, `high`, `capAt`, `method`, `days`) to each Claude limit:
+
+- **Limit log** — every refresh appends the limit percentages to
+  `history/claude-limits.jsonl` (kept 8 weeks). Rises between samples are the
+  burn in the limit's own unit, account-wide, so every machine counts. Used
+  once the log covers 3 days.
+- **Profile** — the expected burn per hour is the recent days' total
+  (weekdays and weekends apart, half-life 14 days) spread over the hours of
+  the day the way those days were, summed until the reset. The band rescales
+  that sum by the quieter and busier quarter of past days.
+- **Until then** — an API-price-weighted cost per hour from this machine's
+  transcripts (cache reads weigh a fraction of fresh input), calibrated to
+  percent by the current window. The panel marks it "est.".
+
+Everything is computed as of the record's `updatedAt`, so an unchanged
+`claude.json` is never rewritten and the path unit does not loop.
 
 ## Interactions
 

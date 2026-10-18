@@ -110,12 +110,75 @@ Panel {
   // and that beats reading it back out of the label: a model-scoped limit is
   // titled after its model, and a name like "Opus 5 (1M context)" would parse
   // as a one-minute window.
-  function limitWindow(label, percent, resetAt, title) {
+  function limitWindow(label, percent, resetAt, title, forecast) {
     return {
       title: String(title || "") !== "" ? String(title) : windowTitle(label),
       percent: Number(percent),
-      resetAt: String(resetAt || "")
+      resetAt: String(resetAt || ""),
+      forecast: forecast || null
     }
+  }
+
+  // forecast.py's landing for the window, or null once it has rolled over.
+  function forecastFor(w) {
+    if (!w || !w.forecast || resetMsFor(w) < 0) return null
+    var f = w.forecast
+    if (!(Number(f.mid) >= 0)) return null
+    return f
+  }
+
+  // Projected landing → ink: green up to 60%, then through yellow (80%) and
+  // orange (95%) to red at the cap and beyond.
+  readonly property var paceStops: [
+    [0.60, 0x3d, 0xd6, 0x8c],
+    [0.80, 0xf5, 0xd5, 0x47],
+    [0.95, 0xff, 0x9a, 0x3d],
+    [1.00, 0xff, 0x4d, 0x4d]
+  ]
+
+  function paceColor(mid) {
+    var stops = root.paceStops
+    var v = Number(mid) || 0
+    if (v <= stops[0][0]) return Qt.rgba(stops[0][1] / 255, stops[0][2] / 255, stops[0][3] / 255, 1)
+    for (var i = 1; i < stops.length; i++) {
+      if (v <= stops[i][0]) {
+        var a = stops[i - 1]
+        var b = stops[i]
+        var t = (v - a[0]) / (b[0] - a[0])
+        return Qt.rgba((a[1] + (b[1] - a[1]) * t) / 255, (a[2] + (b[2] - a[2]) * t) / 255,
+          (a[3] + (b[3] - a[3]) * t) / 255, 1)
+      }
+    }
+    var last = stops[stops.length - 1]
+    return Qt.rgba(last[1] / 255, last[2] / 255, last[3] / 255, 1)
+  }
+
+  // Resets come back a few hundred ms either side of the minute.
+  function roundedToMinute(iso) {
+    var ms = new Date(iso).getTime()
+    return new Date(Math.round(ms / 60000) * 60000)
+  }
+
+  function forecastText(f) {
+    if (!f) return ""
+    var low = Math.round(f.low * 100)
+    var high = Math.round(f.high * 100)
+    var range = low === high ? "" : low + "–" + high + "%"
+    var est = f.method === "cost" ? " · est." : ""
+    var capMs = f.capAt ? new Date(f.capAt).getTime() : NaN
+    if (isFinite(capMs) && capMs > root.nowMs)
+      return "Cap " + Qt.formatDateTime(new Date(capMs), "ddd HH:mm") + " at usual pace (→ "
+        + Math.round(f.mid * 100) + "%" + (range ? ", " + range : "") + ")" + est
+    return "Usual pace → " + Math.round(f.mid * 100) + "%" + (range ? " (" + range + ")" : "") + est
+  }
+
+  function forecastTooltip(f) {
+    if (!f) return ""
+    var source = f.method === "cost"
+      ? "Estimated from this machine's API-priced usage until the limit log covers 3 days."
+      : "From the logged limit percentages."
+    return "Expected burn per hour from the last " + f.days + " days (weekday / weekend, hour of day),"
+      + " summed until the reset. The band is the quieter / busier quarter of past days. " + source
   }
 
   function limitWindows(p) {
@@ -125,7 +188,7 @@ Panel {
     for (var i = 0; i < list.length; i++) {
       var entry = list[i] || {}
       var percent = Number(entry.percent)
-      if (percent >= 0) out.push(limitWindow(entry.label, percent, entry.resetsAt, entry.title))
+      if (percent >= 0) out.push(limitWindow(entry.label, percent, entry.resetsAt, entry.title, entry.forecast))
     }
     return out
   }
@@ -148,7 +211,7 @@ Panel {
         continue
       if ((label.indexOf("other models") >= 0 || title.indexOf("other models") >= 0) && percent === 0)
         continue
-      out.push(limitWindow(entry.label, percent, entry.resetsAt, entry.title))
+      out.push(limitWindow(entry.label, percent, entry.resetsAt, entry.title, entry.forecast))
     }
     return out
   }
@@ -178,6 +241,18 @@ Panel {
     if (days > 0) return days + "d " + (hours % 24) + "h"
     if (hours > 0) return hours + "h " + (minutes % 60) + "m"
     return Math.max(1, minutes) + "m"
+  }
+
+  // "in 3d 1h" for every window; a window longer than a day also names the
+  // local weekday and time it rolls over, since a countdown in days is hard
+  // to place on a calendar.
+  function resetTextFor(w) {
+    var remainingMs = resetMsFor(w)
+    if (!(remainingMs > 0)) return ""
+    var text = "↻ " + formatDuration(remainingMs)
+    if (remainingMs >= 24 * 3600 * 1000)
+      text += " · " + Qt.formatDateTime(roundedToMinute(w.resetAt), "ddd HH:mm")
+    return text
   }
 
   // ---------------------------------------------------------------- balance
@@ -250,7 +325,7 @@ Panel {
     return dayName(date)
   }
 
-  function dayTooltip(day, today, champion) {
+  function dayTooltip(day, today, medal) {
     if (!day) return ""
     var parsed = new Date(String(day.date) + "T00:00:00")
     var label = isNaN(parsed.getTime())
@@ -263,6 +338,7 @@ Panel {
     if (today && provider && provider.hasPromptStats !== false)
       text += " · " + Number(provider.todayPrompts || 0) + " prompts · "
         + Number(provider.todaySessions || 0) + " sessions"
+    if (medal > 0) text += " · #" + medal + " of the last 30 days"
     return text
   }
 
@@ -274,19 +350,35 @@ Panel {
   }
 
   // Busiest day in the TOKENS BY DAY window — the one that gets the cup.
-  function weekChampion(p) {
-    var days = p ? (p.recentDays || []) : []
-    var best = null
-    var peak = 0
-    for (var i = 0; i < days.length; i++) {
-      var n = Number(days[i].messageCount || 0)
-      if (!best || n > peak) {
-        peak = n
-        best = days[i]
-      }
+  // Podium of the last 30 days, today included: date → 1, 2 or 3. The long
+  // series is historyDays; the week rows' own counts win for their dates so a
+  // medal always matches the number printed next to it.
+  function monthPodium(p) {
+    if (!p) return ({})
+    var cutoff = new Date(root.nowMs)
+    cutoff.setHours(0, 0, 0, 0)
+    cutoff.setDate(cutoff.getDate() - 29)
+    var from = cutoff.getFullYear() + "-" + String(cutoff.getMonth() + 1).padStart(2, "0")
+      + "-" + String(cutoff.getDate()).padStart(2, "0")
+    var totals = {}
+    var history = p.historyDays || []
+    for (var i = 0; i < history.length; i++) {
+      var h = history[i] || {}
+      if (String(h.date) >= from) totals[String(h.date)] = Number(h.tokens || 0)
     }
-    return peak > 0 ? best : null
+    var recent = p.recentDays || []
+    for (var j = 0; j < recent.length; j++) {
+      var r = recent[j] || {}
+      if (String(r.date) >= from) totals[String(r.date)] = Number(r.messageCount || 0)
+    }
+    var ranked = Object.keys(totals).filter(function(d) { return totals[d] > 0 })
+    ranked.sort(function(a, b) { return totals[b] - totals[a] })
+    var podium = {}
+    for (var k = 0; k < Math.min(3, ranked.length); k++) podium[ranked[k]] = k + 1
+    return podium
   }
+
+  readonly property var medalColors: ["", "#ffd34d", "#c9d1d9", "#cd7f32"]
 
   function shortMonthDay(isoDate) {
     var parsed = new Date(String(isoDate || "") + "T00:00:00")
@@ -1339,37 +1431,12 @@ Panel {
             width: parent.width
             spacing: Style.space(10)
 
-            readonly property string resetText: {
-              for (var i = 0; i < root.limits.length; i++) {
-                var remainingMs = root.resetMsFor(root.limits[i])
-                if (remainingMs > 0) return "Resets in " + root.formatDuration(remainingMs)
-              }
-              return ""
-            }
-
-            Item {
-              width: parent.width
-              implicitHeight: Math.max(limitsHeader.implicitHeight, limitsReset.implicitHeight)
-
-              PanelSectionHeader {
-                id: limitsHeader
-                text: "LIMITS"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: limitsReset
-                textFormat: Text.PlainText
-                text: limitsSection.resetText
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-              }
+            // Each LimitRow carries its own reset: the session and the weekly
+            // windows roll over on different clocks.
+            PanelSectionHeader {
+              text: "LIMITS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
             }
 
             Repeater {
@@ -1725,7 +1792,7 @@ Panel {
 
             readonly property var days: root.provider ? (root.provider.recentDays || []) : []
             readonly property real peak: Math.max(1, root.weekPeak(root.provider))
-            readonly property var champion: root.weekChampion(root.provider)
+            readonly property var podium: root.monthPodium(root.provider)
             readonly property bool meterCaption: !!(root.provider && String(root.provider.periodUnit || "") === "cents")
 
             Item {
@@ -1769,8 +1836,7 @@ Panel {
                 // By date, not by position: the Claude stats-cache fallback can
                 // hand us a window that stops short of today.
                 today: String(modelData.date || "") === root.todayDate()
-                champion: usageSection.champion
-                  && String(modelData.date || "") === String(usageSection.champion.date || "")
+                medal: usageSection.podium[String(modelData.date || "")] || 0
               }
             }
           }
@@ -1999,6 +2065,8 @@ Panel {
     property var window: null
 
     readonly property bool alarming: window && window.percent >= 0.9
+    readonly property var forecast: root.forecastFor(window)
+    readonly property bool forecastOver: !!forecast && forecast.mid > 1
 
     spacing: Style.space(6)
 
@@ -2017,8 +2085,20 @@ Panel {
         font.pixelSize: Style.font.body
         elide: Text.ElideRight
         anchors.left: parent.left
-        anchors.right: limitValue.left
+        anchors.right: limitReset.left
         anchors.rightMargin: Style.spacing.sm
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Text {
+        id: limitReset
+        textFormat: Text.PlainText
+        text: root.resetTextFor(limitRow.window)
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        anchors.right: limitValue.left
+        anchors.rightMargin: text === "" ? 0 : Style.spacing.sm
         anchors.verticalCenter: parent.verticalCenter
       }
 
@@ -2039,7 +2119,32 @@ Panel {
     Meter {
       width: parent.width
       value: limitRow.window ? limitRow.window.percent : -1
-      alarming: limitRow.alarming
+      forecast: limitRow.forecast
+    }
+
+    Text {
+      id: limitForecast
+      visible: !!limitRow.forecast
+      width: parent.width
+      textFormat: Text.PlainText
+      text: root.forecastText(limitRow.forecast)
+      color: limitRow.forecastOver ? root.paceColor(limitRow.forecast.mid) : root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      elide: Text.ElideRight
+
+      MouseArea {
+        id: forecastHover
+        anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: Qt.NoButton
+      }
+
+      PanelToolTip {
+        visible: forecastHover.containsMouse
+        text: root.forecastTooltip(limitRow.forecast)
+        fontFamily: root.fontFamily
+      }
     }
   }
 
@@ -2047,6 +2152,10 @@ Panel {
   component Meter: Item {
     id: meter
     property real value: -1
+    // forecast.py's landing: the low–high band faint, the run to the usual
+    // pace stronger, both behind the used fill so only what is to come shows.
+    property var forecast: null
+    readonly property color forecastInk: root.paceColor(forecast ? forecast.mid : 0)
     property bool alarming: false
     property real thickness: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.14))
 
@@ -2057,6 +2166,30 @@ Panel {
       anchors.fill: parent
       radius: height / 2
       color: root.track
+    }
+
+    Rectangle {
+      visible: !!meter.forecast && meter.forecast.high > meter.value
+      x: meterTrack.width * root.clamp(meter.forecast ? Math.max(meter.forecast.low, meter.value) : 0, 0, 1)
+      anchors.verticalCenter: meterTrack.verticalCenter
+      height: meterTrack.height
+      radius: meterTrack.radius
+      width: meterTrack.width * root.clamp(meter.forecast ? meter.forecast.high : 0, 0, 1) - x
+      color: root.alpha(meter.forecastInk, 0.2)
+    }
+
+    Rectangle {
+      visible: !!meter.forecast && meter.forecast.mid > meter.value
+      anchors.left: meterTrack.left
+      anchors.verticalCenter: meterTrack.verticalCenter
+      height: meterTrack.height
+      radius: meterTrack.radius
+      width: meterTrack.width * root.clamp(meter.forecast ? meter.forecast.mid : 0, 0, 1)
+      color: root.alpha(meter.forecastInk, 0.45)
+
+      Behavior on width {
+        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+      }
     }
 
     Rectangle {
@@ -2075,17 +2208,18 @@ Panel {
   }
 
   // One row per day: label, bar, tokens. Today is picked out in full
-  // foreground so the week reads as a run-up to right now. The busiest
-  // day takes the theme accent and a cup.
+  // foreground so the week reads as a run-up to right now. A day on the
+  // last 30 days' podium gets a gold, silver or bronze cup.
   component DayRow: Item {
     id: dayRow
     property var day: null
     property real ratio: 0
     property bool today: false
-    property bool champion: false
+    // 1-3 on the last 30 days' podium, 0 off it.
+    property int medal: 0
 
-    readonly property color ink: champion ? root.contrast : (today ? root.foreground : root.dim)
-    readonly property color fill: champion ? root.contrast : (today ? root.foreground : root.alpha(root.foreground, 0.55))
+    readonly property color ink: today ? root.foreground : root.dim
+    readonly property color fill: today ? root.foreground : root.alpha(root.foreground, 0.55)
 
     implicitHeight: Math.max(dayLabel.implicitHeight, dayValue.implicitHeight) + Style.spacing.sm
 
@@ -2096,7 +2230,7 @@ Panel {
       color: dayRow.ink
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
-      font.bold: dayRow.today || dayRow.champion
+      font.bold: dayRow.today
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       width: Style.space(52)
@@ -2144,12 +2278,12 @@ Panel {
     // Overlay: does not steal track width. Centered in the gap between the
     // bar's right edge and the actual start of the token text.
     Text {
-      id: championCup
-      visible: dayRow.champion
+      id: medalCup
+      visible: dayRow.medal > 0
       z: 1
       textFormat: Text.PlainText
       text: "\uf091"
-      color: root.contrast
+      color: root.medalColors[dayRow.medal] || root.contrast
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
       anchors.verticalCenter: parent.verticalCenter
@@ -2169,7 +2303,7 @@ Panel {
 
     PanelToolTip {
       visible: dayHover.containsMouse
-      text: root.dayTooltip(dayRow.day, dayRow.today, dayRow.champion)
+      text: root.dayTooltip(dayRow.day, dayRow.today, dayRow.medal)
       fontFamily: root.fontFamily
     }
   }

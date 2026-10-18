@@ -31,6 +31,17 @@ Item {
         // series in between so the history chart does not blink.
         if (!parsed.historyDays && root.record && root.record.historyDays)
           parsed.historyDays = root.record.historyDays
+        // Same for the per-limit forecasts forecast.py adds.
+        if (root.record && Array.isArray(parsed.limits) && Array.isArray(root.record.limits)) {
+          for (var i = 0; i < parsed.limits.length; i++) {
+            var limit = parsed.limits[i]
+            if (!limit || limit.forecast) continue
+            for (var j = 0; j < root.record.limits.length; j++) {
+              var old = root.record.limits[j]
+              if (old && old.forecast && old.label === limit.label) limit.forecast = old.forecast
+            }
+          }
+        }
         root.record = parsed
       } else {
         root.record = null
