@@ -13,9 +13,9 @@ import qs.Commons
 //
 // In each gauge: the share used, solid; a pale arc on to where the
 // forecast lands at the reset; a notch for how much of the window has
-// gone by (past it, the pace would not last). Neutral while the forecast
-// stays under 80 %, amber over it, red when the limit would be hit before
-// the reset. Hovering a gauge holds its details in the middle circle (the
+// gone by (past it, the pace would not last). Coloured by the forecast at
+// the end of the window, green at 0 % to red at 100 % (and red whenever the
+// limit would be hit before the reset), the way the battery band runs. Hovering a gauge holds its details in the middle circle (the
 // minimap's OSD face, faded in); clicking opens the My Agents panel. A
 // gauge turning red blinks and shows its details for a few seconds, once
 // per window. Data older than 15 minutes fades the band and sends no alert.
@@ -35,8 +35,6 @@ Item {
   readonly property string path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state")
     + "/omarchy/agents/usage/claude.json"
 
-  readonly property color amber: "#e0af68"
-  readonly property color red: Color.urgent
   readonly property color neutral: Qt.alpha(Color.foreground, 0.7)
 
   // ---- data
@@ -96,14 +94,18 @@ Item {
       out.push({
         spec: s, known: true, used: used, forecast: forecast, reset: reset, cap: cap,
         elapsed: reset > 0 ? Math.max(0, Math.min(1, 1 - (reset - now) / s.span)) : -1,
-        risk: full ? "full" : forecast >= 0.8 ? "warn" : "ok",
+        risk: full ? "full" : "ok",
         window: s.key + "|" + String(limit.resetsAt || "")
       })
     }
     return out
   }
 
-  function riskColor(g) { return g.risk === "full" ? red : g.risk === "warn" ? amber : neutral }
+  // Green (hue 1/3) at a 0 % forecast to red (hue 0) at 100 %.
+  function riskColor(g) {
+    var t = g.risk === "full" ? 1 : Math.max(0, Math.min(1, g.forecast))
+    return Qt.hsla((1 - t) / 3, 0.75, 0.5, 1)
+  }
 
   // ---- details, in the middle circle
 
@@ -133,7 +135,7 @@ Item {
       value: g.known ? g.used * 100 : 0,
       maxValue: 100,
       ghost: g.known ? Math.min(1, g.forecast) : 0,
-      color: g.known && g.risk !== "ok" ? String(riskColor(g)) : String(Color.accent),
+      color: g.known ? String(riskColor(g)) : String(Color.accent),
       quiet: quiet
     }
   }
