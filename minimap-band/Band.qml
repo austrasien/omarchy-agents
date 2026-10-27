@@ -223,6 +223,8 @@ Item {
       readonly property real span: g.spec.to - g.spec.from
       readonly property real start: g.spec.from - 90       // Qt's angles start at three o'clock
       readonly property color ink: g.known ? band.riskColor(g) : band.neutral
+      // As see-through as the dial's daylight arc, so the rim reads as one.
+      readonly property real inkAlpha: 0.55
       anchors.fill: parent
       preferredRendererType: Shape.CurveRenderer
       opacity: band.blinkIndex === index ? band.blinkLevel : 1
@@ -236,7 +238,7 @@ Item {
       }
       // The forecast, pale, from the share used on.
       ShapePath {
-        strokeColor: Qt.alpha(gauge.ink, 0.3)
+        strokeColor: Qt.alpha(gauge.ink, gauge.inkAlpha * 0.4)
         strokeWidth: band.thickness
         fillColor: "transparent"
         capStyle: ShapePath.FlatCap
@@ -247,7 +249,7 @@ Item {
         }
       }
       ShapePath {
-        strokeColor: gauge.ink
+        strokeColor: Qt.alpha(gauge.ink, gauge.inkAlpha)
         strokeWidth: band.thickness
         fillColor: "transparent"
         capStyle: ShapePath.FlatCap
