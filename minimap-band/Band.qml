@@ -14,8 +14,8 @@ import qs.Commons
 // In each gauge: the share used, solid; a pale arc on to where the
 // forecast lands at the reset; a notch for how much of the window has
 // gone by (past it, the pace would not last). Coloured by the forecast at
-// the end of the window, green at 0 % to red at 100 % (and red whenever the
-// limit would be hit before the reset), the way the battery band runs. Hovering a gauge holds its details in the middle circle (the
+// the end of the window: green up to 70 %, then on to red at 100 % (and red
+// whenever the limit would be hit before the reset). Hovering a gauge holds its details in the middle circle (the
 // minimap's OSD face, faded in); clicking opens the My Agents panel. A
 // gauge turning red blinks and shows its details for a few seconds, once
 // per window. Data older than 15 minutes fades the band and sends no alert.
@@ -101,9 +101,10 @@ Item {
     return out
   }
 
-  // Green (hue 1/3) at a 0 % forecast to red (hue 0) at 100 %.
+  // Green (hue 1/3) up to a 70 % forecast, then on to red (hue 0) at 100 %.
+  readonly property real greenUpTo: 0.7
   function riskColor(g) {
-    var t = g.risk === "full" ? 1 : Math.max(0, Math.min(1, g.forecast))
+    var t = g.risk === "full" ? 1 : Math.max(0, Math.min(1, (g.forecast - greenUpTo) / (1 - greenUpTo)))
     return Qt.hsla((1 - t) / 3, 0.75, 0.5, 1)
   }
 

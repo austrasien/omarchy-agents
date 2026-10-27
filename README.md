@@ -153,9 +153,9 @@ It reads `usage/claude.json` and fetches nothing.
 - In each: the share used, then a pale arc on to the forecast at the reset
   (`forecast.mid`), and a notch for how much of the window has gone by; past
   the notch, the pace would not last.
-- Coloured by the forecast at the end of the window, from green at 0 % to
-  red at 100 %, like the battery band; red too whenever the limit would be
-  hit before the reset.
+- Coloured by the forecast at the end of the window: green up to 70 %, then
+  on to red at 100 %; red too whenever the limit would be hit before the
+  reset.
 - Hover a gauge: its details in the minimap's middle circle (used, forecast
   or "plein vers" the cap time, reset). Click: this panel.
 - A gauge turning red blinks and shows its details for a few seconds, once
