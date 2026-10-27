@@ -147,9 +147,9 @@ link it as the minimap's `bands/ai`
 It reads `usage/claude.json` and fetches nothing.
 
 - Three gauges apart from the clock around them, each labelled in the gap
-  before it and filling clockwise to its own 100 %: the 5-hour session
-  (`5h`, top right), the week (`7j`, bottom), the week's Fable share (`F`,
-  left).
+  before it and filling clockwise to its own 100 %, read on a 12-hour face:
+  the week (`7j`) from ten to two over the top, the 5-hour session (`5h`)
+  from two to six, the week's Fable share (`F`) from six to ten.
 - In each: the share used, then a pale arc on to the forecast at the reset
   (`forecast.mid`), and a notch for how much of the window has gone by; past
   the notch, the pace would not last.

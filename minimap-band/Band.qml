@@ -6,9 +6,10 @@ import qs.Commons
 
 // Claude's three limits on a band of austraz.minimap's rim (installed by
 // linking this folder as the minimap's bands/ai). Three gauges, apart from
-// the clock around them: the 5-hour session at the top right, the week at
-// the bottom, the week's Fable share on the left, each labelled in the gap
-// before it and filling clockwise to its own 100 %.
+// the clock around them, read on a 12-hour face: the week from ten to two
+// (over the top), the 5-hour session from two to six, the week's Fable
+// share from six to ten; each labelled in the gap before it and filling
+// clockwise to its own 100 %.
 //
 // In each gauge: the share used, solid; a pale arc on to where the
 // forecast lands at the reset; a notch for how much of the window has
@@ -71,11 +72,12 @@ Item {
   readonly property real now: minimap.nowSec
   readonly property bool stale: updatedAt > 0 && now - updatedAt > 900
 
-  // Clock degrees (0 at noon, clockwise); each gauge spans from..to.
+  // Clock degrees (0 at noon, clockwise); each gauge spans from..to (past
+  // 360 when it crosses noon), its label in the gap at `gap`.
   readonly property var specs: [
-    { key: "session", from: 10, to: 110, gap: 0, label: "5h", name: "Session 5 h", span: 5 * 3600, glyph: 0xF051F, match: /session/i },
-    { key: "weekly", from: 130, to: 230, gap: 120, label: "7j", name: "Semaine", span: 7 * 86400, glyph: 0xF00ED, match: /^weekly/i },
-    { key: "fable", from: 250, to: 350, gap: 240, label: "F", name: "Fable · semaine", span: 7 * 86400, glyph: 0xF09D1, match: /fable/i }
+    { key: "weekly", from: 310, to: 410, gap: 300, label: "7j", name: "Semaine", span: 7 * 86400, glyph: 0xF00ED, match: /^weekly/i },
+    { key: "session", from: 70, to: 170, gap: 60, label: "5h", name: "Session 5 h", span: 5 * 3600, glyph: 0xF051F, match: /session/i },
+    { key: "fable", from: 190, to: 290, gap: 180, label: "F", name: "Fable · semaine", span: 7 * 86400, glyph: 0xF09D1, match: /fable/i }
   ]
 
   readonly property var gauges: {
@@ -142,7 +144,10 @@ Item {
   function gaugeAt(x, y) {
     var a = Math.atan2(x - cx, cy - y) * 180 / Math.PI
     if (a < 0) a += 360
-    for (var i = 0; i < specs.length; i++) if (a >= specs[i].from && a <= specs[i].to) return i
+    for (var i = 0; i < specs.length; i++) {
+      var s = specs[i]
+      if ((a >= s.from && a <= s.to) || (a + 360 >= s.from && a + 360 <= s.to)) return i
+    }
     return -1
   }
   onHoveredChanged: hovered < 0 ? minimap.releaseOsd() : minimap.holdOsd(detail(gauges[hovered], true))
