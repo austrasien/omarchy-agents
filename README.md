@@ -139,6 +139,28 @@ The same run calls `forecast.py`, which adds a `forecast` object
 Everything is computed as of the record's `updatedAt`, so an unchanged
 `claude.json` is never rewritten and the path unit does not loop.
 
+### Minimap band
+
+`minimap-band/` is a rim band for [austraz.minimap](https://github.com/austrasien/omarchy-minimap):
+link it as the minimap's `bands/ai`
+(`ln -s ~/.config/omarchy/plugins/austraz.agents/minimap-band ~/.config/omarchy/plugins/austraz.minimap/bands/ai`).
+It reads `usage/claude.json` and fetches nothing.
+
+- Three gauges apart from the clock around them, each labelled in the gap
+  before it and filling clockwise to its own 100 %: the 5-hour session
+  (`5h`, top right), the week (`7j`, bottom), the week's Fable share (`F`,
+  left).
+- In each: the share used, then a pale arc on to the forecast at the reset
+  (`forecast.mid`), and a notch for how much of the window has gone by; past
+  the notch, the pace would not last.
+- Neutral while the forecast stays under 80 %, amber over it, red when the
+  limit would be hit before the reset.
+- Hover a gauge: its details in the minimap's middle circle (used, forecast
+  or "plein vers" the cap time, reset). Click: this panel.
+- A gauge turning red blinks and shows its details for a few seconds, once
+  per window; those already red when the shell starts stay quiet. Data older
+  than 15 minutes fades the band and sends no alert.
+
 ## Interactions
 
 - Bar icon: left = panel, right = launch agent, middle = next subscription.

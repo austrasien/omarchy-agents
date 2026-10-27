@@ -1,0 +1,6 @@
+{
+  "id": "ai",
+  "name": "Conso IA",
+  "entry": "Band.qml",
+  "order": 10
+}
