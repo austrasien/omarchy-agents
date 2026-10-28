@@ -15,7 +15,7 @@ import qs.Commons
 // forecast lands at the reset; a notch for how much of the window has
 // gone by (past it, the pace would not last). Coloured by the forecast at
 // the end of the window: green up to 70 %, then on to red at 100 % (and red
-// whenever the limit would be hit before the reset). Hovering a gauge holds its details in the middle circle (the
+// whenever the limit would be hit before the reset). Hovering a gauge (or its label) holds its details in the middle circle (the
 // minimap's OSD face, faded in); clicking opens the My Agents panel. A
 // gauge turning red blinks and shows its details for a few seconds, once
 // per window. Data older than 15 minutes fades the band and sends no alert.
@@ -143,13 +143,17 @@ Item {
 
   // ---- hover and click
 
+  // A gauge's label counts as the gauge: its half-width on the rim, in degrees.
+  readonly property real labelHalf: thickness / radius * 180 / Math.PI
+
   property int hovered: -1
   function gaugeAt(x, y) {
     var a = Math.atan2(x - cx, cy - y) * 180 / Math.PI
     if (a < 0) a += 360
     for (var i = 0; i < specs.length; i++) {
       var s = specs[i]
-      if ((a >= s.from && a <= s.to) || (a + 360 >= s.from && a + 360 <= s.to)) return i
+      var lo = Math.max(s.gap - labelHalf, 2 * s.gap - s.from)
+      if ((a >= lo && a <= s.to) || (a + 360 >= lo && a + 360 <= s.to)) return i
     }
     return -1
   }
